@@ -42,6 +42,7 @@ class App
         controls.object.position.set( 0.0, 1.0, 3.0);
         controls.minDistance = 1.0;
         controls.maxDistance = 5.0;
+        controls.enableDamping = true
 
         // Lights
         let hemiLight = new THREE.HemisphereLight( 0xfffff, 0xffffff, 0.05 );
@@ -55,42 +56,32 @@ class App
         bulbLight.castShadow = true;
         scene.add( bulbLight );
 
-        // Environment
-        // let hdr = new HDRJPGLoader( renderer ).load(
-        //     "res/hdrs/HdrSkyMorning004/HdrSkyMorning004_JPG_1K.jpg",
-        //     () => {
-        //         let hdrEquirectangularMap = hdr.renderTarget.texture;
-        //         hdrEquirectangularMap.mapping = THREE.hdrEquirectangularReflectionMapping;
-        //         hdrEquirectangularMap.needsUpdate = true;
-
-        //         // scene.environment = hdrEquirectangularMap;
-        //         // scene.background = hdrEquirectangularMap;
-        //         this.background = hdrEquirectangularMap;
-
-        //         hdr.dispose;
-        //     }
-        // );
-        const pmremGenerator = new THREE.PMREMGenerator(renderer);
-        pmremGenerator.compileEquirectangularShader();
-
-        this.exrLoader.setDataType(THREE.FloatType).load("res/hdrs/HdrSkyMorning004/HdrSkyMorning004_HDR_1K.exr",
-            (texture) => {
-                let exrCubeRenderTarget = pmremGenerator.fromEquirectangular(texture);
-                this.exrBackground = exrCubeRenderTarget.texture;
-                this.newEnvMap = exrCubeRenderTarget ? exrCubeRenderTarget.texture : null;
-                // this.background.mapping = THREE.EquirectangularReflectionMapping;
-                //hdrEquirectangularMap.mapping = THREE.hdrEquirectangularReflectionMapping;
-                scene.background = this.newEnvMap;
-                pmremGenerator.dispose();
-                texture.dispose();
-            }
-        );
-
         // Load Shaders
         this.shaderManager = new ShaderManager("res/shaders/");
         let promise = await this.shaderManager.loadFromFile("basic.vs");
         promise = await this.shaderManager.loadFromFile("flat.fs"); // I CAN'T COMMENT THIS?????
         promise = await this.shaderManager.loadFromFile("waterSurface.fs");
+
+        // Environment
+        const urls = [
+            'https://closure.vps.wbsprt.com/files/spherereflect/px_ohmful.png',
+            'https://closure.vps.wbsprt.com/files/spherereflect/nx_bk7je6.png',
+            'https://closure.vps.wbsprt.com/files/spherereflect/py_b1wbia.png',
+            'https://closure.vps.wbsprt.com/files/spherereflect/ny_uotebl.png',
+            'https://closure.vps.wbsprt.com/files/spherereflect/pz_byr0fi.png',
+            'https://closure.vps.wbsprt.com/files/spherereflect/nz_u9mv7e.png',
+        ];
+        const cubeTextureLoader = new THREE.CubeTextureLoader();
+        const background = cubeTextureLoader.load(urls);
+        scene.background = background;
+
+        let cubeRenderTarget = new THREE.WebGLCubeRenderTarget(512, {
+            format: THREE.RGBFormat,
+            generateMipmaps: true,
+            minFilter: THREE.LinearMipmapLinearFilter,
+        });
+    
+        let cubeCamera = this.cubeCamera = new THREE.CubeCamera(1, 100, cubeRenderTarget);
 
         // Init Nodes
         let texture = this.textureLoader.load('/res/textures/TilesSquarePoolMixed001/TilesSquarePoolMixed001_COL_1K.jpg');
@@ -101,23 +92,19 @@ class App
 
         let waterSurfaceMat = new THREE.ShaderMaterial({
             uniforms: {
-                u_local_camera_position: {value: camera.position},
-                u_local_light_position: {value: bulbLight.position},
-                // u_texture: {type: "t", value: this.background},
-                // u_env_tex: {value: this.newEnvMap},
+                u_camera_position: {value: camera.position},
+                u_light_position: {value: bulbLight.position},
+                u_cube_map: {value: cubeCamera.renderTarget.texture},
             },
             vertexShader: this.shaderManager.get("basic.vs"),
             fragmentShader: this.shaderManager.get("waterSurface.fs"),
             side: THREE.DoubleSide,
-            // envMap: this.newEnvMap,
             transparent: true,
         });
-        waterSurfaceMat.envMap = this.newEnvMap; 
-        waterSurfaceMat.uniforms.envMap = this.newEnvMap; 
         let plane = new THREE.Mesh( new THREE.PlaneGeometry( 1, 1 ), waterSurfaceMat );
         plane.position.set( 0.0, 0.4, 0.0 );
         plane.rotateX(-Math.PI / 2);
-        scene.add( plane ); 
+        scene.add( plane );
 
         // Add more info
         let versionDiv = document.createElement("div");
@@ -164,12 +151,13 @@ class App
     {
         this.controls.update();
 
+        // update the render target
+        this.cubeCamera.update(this.renderer, this.scene);
+
         // Update uniforms
-        // let cameraLocalPos = this.scene.children[3].worldToLocal(this.camera.position.clone());
-        this.scene.children[3].material.uniforms.u_local_camera_position.value = this.camera.position;
-        // let lightLocalPos = this.scene.children[3].worldToLocal(this.scene.children[1].position.clone());
-        this.scene.children[3].material.uniforms.u_local_light_position.value = this.scene.children[1].position;
-        this.scene.children[3].material.uniforms.u_env_tex = this.newEnvMap;
+        this.scene.children[3].material.uniforms.u_camera_position.value = this.camera.position;
+        this.scene.children[3].material.uniforms.u_light_position.value = this.scene.children[1].position;
+        this.scene.children[3].material.uniforms.u_cube_map.value = this.cubeCamera.renderTarget.texture;
     }
 
     onWindowResize()
