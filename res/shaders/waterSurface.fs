@@ -28,5 +28,5 @@ void main()
 		finalColor = textureCube( u_cube_map, camera_intersection_dir ).rgb;
 	}
 
-	gl_FragColor = vec4(finalColor, 0.7);
+	gl_FragColor = vec4(finalColor, 0.5);
 }

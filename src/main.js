@@ -2,8 +2,6 @@ import * as THREE from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 
 import { ShaderManager } from "./shaderManager.js";
-// import { HDRJPGLoader } from "https://cdn.jsdelivr.net/npm/@monogrid/gainmap-js@3.0.0/dist/decode.js"
-import { EXRLoader } from "three/addons/loaders/EXRLoader.js"
 
 const VERSION = "0.0";
 
@@ -20,26 +18,23 @@ class App
         this.currentTime = performance.now() / 1000.0; // seconds
         
         this.textureLoader = new THREE.TextureLoader();
-        this.exrLoader = new EXRLoader();
     }
 
     async init()
     {
         // Init Scene
         let scene = this.scene = new THREE.Scene();
-        scene.background = new THREE.Color( 0x1f1f1f );
     
         // Renderer
         let renderer = this.renderer = new THREE.WebGLRenderer( {antialias: true} );
         renderer.setPixelRatio( window.devicePixelRatio );
         renderer.setSize( window.innerWidth, window.innerHeight );
-        // renderer.toneMapping = THREE.ReinhardToneMapping;
         document.body.appendChild( renderer.domElement );
     
         // Camera
         let camera = this.camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 0.1, 1000 );
         let controls = this.controls = new OrbitControls( camera, renderer.domElement );
-        controls.object.position.set( 0.0, 1.0, 3.0);
+        controls.object.position.set( 0.0, 1.0, 4.0);
         controls.minDistance = 1.0;
         controls.maxDistance = 5.0;
         controls.enableDamping = true
@@ -48,7 +43,7 @@ class App
         let hemiLight = new THREE.HemisphereLight( 0xfffff, 0xffffff, 0.05 );
         scene.add( hemiLight );
 
-        let bulbLight = new THREE.PointLight( 0xffffff, 1, 100, 2 );
+        let bulbLight = this.bulbLight = new THREE.PointLight( 0xffffff, 1, 100, 2 );
         let bulbGeometry = new THREE.SphereGeometry( 0.02, 16, 8 );
         let bulbMat = new THREE.MeshStandardMaterial( {emissive: 0xffffff, emissiveIntensity: 1, color: 0xffffff} );
         bulbLight.add( new THREE.Mesh( bulbGeometry, bulbMat ) );
@@ -56,24 +51,17 @@ class App
         bulbLight.castShadow = true;
         scene.add( bulbLight );
 
-        // Load Shaders
-        this.shaderManager = new ShaderManager("res/shaders/");
-        let promise = await this.shaderManager.loadFromFile("basic.vs");
-        promise = await this.shaderManager.loadFromFile("flat.fs"); // I CAN'T COMMENT THIS?????
-        promise = await this.shaderManager.loadFromFile("waterSurface.fs");
-
         // Environment
         const urls = [
-            'https://closure.vps.wbsprt.com/files/spherereflect/px_ohmful.png',
-            'https://closure.vps.wbsprt.com/files/spherereflect/nx_bk7je6.png',
-            'https://closure.vps.wbsprt.com/files/spherereflect/py_b1wbia.png',
-            'https://closure.vps.wbsprt.com/files/spherereflect/ny_uotebl.png',
-            'https://closure.vps.wbsprt.com/files/spherereflect/pz_byr0fi.png',
-            'https://closure.vps.wbsprt.com/files/spherereflect/nz_u9mv7e.png',
+            '/res/cubemaps/sky_15_cubemap_2k/px.png',
+            '/res/cubemaps/sky_15_cubemap_2k/nx.png',
+            '/res/cubemaps/sky_15_cubemap_2k/py.png',
+            '/res/cubemaps/sky_15_cubemap_2k/ny.png',
+            '/res/cubemaps/sky_15_cubemap_2k/pz.png',
+            '/res/cubemaps/sky_15_cubemap_2k/nz.png',
         ];
         const cubeTextureLoader = new THREE.CubeTextureLoader();
-        const background = cubeTextureLoader.load(urls);
-        scene.background = background;
+        scene.background = cubeTextureLoader.load(urls);
 
         let cubeRenderTarget = new THREE.WebGLCubeRenderTarget(512, {
             format: THREE.RGBFormat,
@@ -81,32 +69,161 @@ class App
             minFilter: THREE.LinearMipmapLinearFilter,
         });
     
-        let cubeCamera = this.cubeCamera = new THREE.CubeCamera(1, 100, cubeRenderTarget);
+        this.cubeCamera = new THREE.CubeCamera(1, 100, cubeRenderTarget);
+
+        // Load Shaders
+        this.shaderManager = new ShaderManager("res/shaders/");
+        let promise = await this.shaderManager.loadFromFile("basic.vs");
+        promise = await this.shaderManager.loadFromFile("waterSurface.fs");
 
         // Init Nodes
-        let texture = this.textureLoader.load('/res/textures/TilesSquarePoolMixed001/TilesSquarePoolMixed001_COL_1K.jpg');
-        let normalTexture = this.textureLoader.load('/res/textures/TilesSquarePoolMixed001/TilesSquarePoolMixed001_NRM_1K.jpg');
-        let material1 = new THREE.MeshPhongMaterial( {side: THREE.BackSide, map: texture, normalMap: normalTexture} );
-        let cube = new THREE.Mesh( new THREE.BoxGeometry( 1, 1, 1 ), material1 ); 
-        scene.add( cube );
+        this.createPool();
+        this.createSurface();
 
+        this.addGUI();
+        
+        // Add events
+        window.addEventListener( "resize", this.onWindowResize.bind(this) );
+        setInterval(() => {document.querySelector("#fps").innerHTML = (1.0/this.frameTime).toFixed(2) + " fps";}, 100);
+
+        this.animate();
+    }
+
+    createPool()
+    {
+        let texture = this.textureLoader.load('/res/textures/TilesSquarePoolMixed001/TilesSquarePoolMixed001_COL_1K.jpg');
+        texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set(3, 2);
+        let normalTexture = this.textureLoader.load('/res/textures/TilesSquarePoolMixed001/TilesSquarePoolMixed001_NRM_1K.jpg');
+        let material = new THREE.MeshPhongMaterial( {side: THREE.BackSide, map: texture } );//, normalMap: normalTexture} );
+
+        this._geometry = new THREE.BufferGeometry();
+        const vertices = new Float32Array([
+            0.5, 0.5, 0.5,
+            0.5, 0.5, -0.5,
+            0.5, -0.5, 0.5,
+            0.5, -0.5, -0.5,
+            -0.5, 0.5, -0.5,
+            -0.5, 0.5, 0.5,
+            -0.5, -0.5, -0.5,
+            -0.5, -0.5, 0.5,
+            -0.5, 0.5, -0.5,
+            0.5, 0.5, -0.5,
+            -0.5, 0.5, 0.5,
+            0.5, 0.5, 0.5,
+            -0.5, -0.5, 0.5,
+            0.5, -0.5, 0.5,
+            -0.5, -0.5, -0.5,
+            0.5, -0.5, -0.5,
+            -0.5, 0.5, 0.5,
+            0.5, 0.5, 0.5,
+            -0.5, -0.5, 0.5,
+            0.5, -0.5, 0.5,
+            0.5, 0.5, -0.5,
+            -0.5, 0.5, -0.5,
+            0.5, -0.5, -0.5,
+            -0.5, -0.5, -0.5
+        ]);
+        const uvs = new Float32Array([
+            0, 1,
+            1, 1,
+            0, 0,
+            1, 0,
+            0, 1,
+            1, 1,
+            0, 0,
+            1, 0,
+            0, 1,
+            1, 1,
+            0, 0,
+            1, 0,
+            0, 1,
+            1, 1,
+            0, 0,
+            1, 0,
+            0, 1,
+            1, 1,
+            0, 0,
+            1, 0,
+            0, 1,
+            1, 1,
+            0, 0,
+            1, 0
+        ]);
+        const indices = new Uint32Array([
+            0, 2, 1,
+            2, 3, 1,
+            4, 6, 5,
+            6, 7, 5,
+            // 8, 10, 9, // omit top face
+            // 10, 11, 9, // omit top face
+            12, 14, 13,
+            14, 15, 13,
+            16, 18, 17,
+            18, 19, 17,
+            20, 22, 21,
+            22, 23, 21
+        ]);
+
+        const normals = new Float32Array([
+            1, 0, 0,
+            1, 0, 0,
+            1, 0, 0,
+            1, 0, 0,
+            -1, 0, 0,
+            -1, 0, 0,
+            -1, 0, 0,
+            -1, 0, 0,
+            0, 1, 0,
+            0, 1, 0,
+            0, 1, 0,
+            0, 1, 0,
+            0, -1, 0,        
+            0, -1, 0,
+            0, -1, 0,
+            0, -1, 0,
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, 1,
+            0, 0, -1,
+            0, 0, -1,
+            0, 0, -1,
+            0, 0, -1
+        ]);
+  
+        this._geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+        this._geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+        this._geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+        this._geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+
+        let cube = new THREE.Mesh( this._geometry, material ); 
+        cube.scale.set( 3, 1, 2 );
+
+        this.scene.add( cube );
+    }
+
+    createSurface()
+    {
         let waterSurfaceMat = new THREE.ShaderMaterial({
             uniforms: {
-                u_camera_position: {value: camera.position},
-                u_light_position: {value: bulbLight.position},
-                u_cube_map: {value: cubeCamera.renderTarget.texture},
+                u_camera_position: {value: this.camera.position},
+                u_light_position: {value: this.bulbLight.position},
+                u_cube_map: {value: this.cubeCamera.renderTarget.texture},
             },
             vertexShader: this.shaderManager.get("basic.vs"),
             fragmentShader: this.shaderManager.get("waterSurface.fs"),
             side: THREE.DoubleSide,
             transparent: true,
         });
-        let plane = new THREE.Mesh( new THREE.PlaneGeometry( 1, 1 ), waterSurfaceMat );
-        plane.position.set( 0.0, 0.4, 0.0 );
+        let plane = new THREE.Mesh( new THREE.PlaneGeometry( 3, 2 ), waterSurfaceMat );
+        plane.position.set( 0.0, 0.5, 0.0 );
         plane.rotateX(-Math.PI / 2);
-        scene.add( plane );
+        this.scene.add( plane );
+    }
 
-        // Add more info
+    addGUI()
+    {
         let versionDiv = document.createElement("div");
         versionDiv.id = "version";
         versionDiv.innerText = "v" + VERSION;
@@ -115,7 +232,7 @@ class App
         versionDiv.style.left = "20px";
         versionDiv.style.bottom = "20px";
         document.body.appendChild( versionDiv );
-        
+
         let fpsDiv = document.createElement("div");
         fpsDiv.id = "fps";
         fpsDiv.style.position = "absolute";
@@ -123,12 +240,6 @@ class App
         fpsDiv.style.bottom = "40px";
         fpsDiv.style.color = "white";
         document.body.appendChild( fpsDiv );
-
-        // Add events
-        window.addEventListener( "resize", this.onWindowResize.bind(this) );
-        setInterval(() => {document.querySelector("#fps").innerHTML = (1.0/this.frameTime).toFixed(2) + " fps";}, 100);
-
-        this.animate();
     }
 
     animate()
@@ -152,7 +263,11 @@ class App
         this.controls.update();
 
         // update the render target
+        this.scene.children[2].visible = false;
+        this.scene.children[3].visible = false;
         this.cubeCamera.update(this.renderer, this.scene);
+        this.scene.children[2].visible = true;
+        this.scene.children[3].visible = true;
 
         // Update uniforms
         this.scene.children[3].material.uniforms.u_camera_position.value = this.camera.position;
